@@ -32,6 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu"
     )
+    parser.add_argument("--max-samples", type=int, default=None)
     return parser.parse_args()
 
 
@@ -93,6 +94,8 @@ def main() -> None:
     device = torch.device(args.device)
     model, config = load_model(args.checkpoint, device)
     records = discover_records(args.dataset_root)
+    if args.max_samples is not None:
+        records = records[: args.max_samples]
     loader = build_loader(records, config, args.batch_size, args.num_workers)
 
     record_by_id = {record.video_id: record for record in records}

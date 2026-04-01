@@ -17,11 +17,13 @@ from rlnet.utils import save_json, set_seed
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train a paper-inspired RLNet baseline on UADFV frame sequences.")
-    parser.add_argument("--dataset-root", type=Path, default=Path("UADFV"))
+    parser = argparse.ArgumentParser(
+        description="Train a paper-inspired RLNet baseline on UADFV frame sequences."
+    )
+    parser.add_argument("--dataset-root", type=Path, nargs="+", default=[Path("UADFV")])
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/rlnet"))
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--batch-size", type=int, default=2)
+    parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--backbone-learning-rate", type=float, default=3e-5)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
@@ -30,22 +32,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hidden-size", type=int, default=256)
     parser.add_argument("--num-layers", type=int, default=2)
     parser.add_argument("--dropout", type=float, default=0.3)
-    parser.add_argument("--bidirectional", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--bidirectional", action=argparse.BooleanOptionalAction, default=True
+    )
     parser.add_argument("--val-size", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-workers", type=int, default=0)
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--pretrained-backbone", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--freeze-backbone", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--unfreeze-epoch", type=int, default=3)
+    parser.add_argument(
+        "--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu"
+    )
+    parser.add_argument(
+        "--pretrained-backbone", action=argparse.BooleanOptionalAction, default=True
+    )
+    parser.add_argument(
+        "--freeze-backbone", action=argparse.BooleanOptionalAction, default=True
+    )
+    parser.add_argument("--unfreeze-epoch", type=int, default=1)
     parser.add_argument("--scheduler-patience", type=int, default=2)
     parser.add_argument("--scheduler-factor", type=float, default=0.5)
+    parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--max-train-samples", type=int, default=None)
     parser.add_argument("--max-val-samples", type=int, default=None)
     return parser.parse_args()
 
 
-def build_loader(dataset: FrameSequenceDataset, batch_size: int, num_workers: int, shuffle: bool) -> DataLoader:
+def build_loader(
+    dataset: FrameSequenceDataset, batch_size: int, num_workers: int, shuffle: bool
+) -> DataLoader:
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -110,7 +123,11 @@ def run_epoch(
 
 
 def build_optimizer(model: RLNet, args: argparse.Namespace) -> torch.optim.Optimizer:
-    backbone_parameters = [parameter for parameter in model.backbone.parameters() if parameter.requires_grad]
+    backbone_parameters = [
+        parameter
+        for parameter in model.backbone.parameters()
+        if parameter.requires_grad
+    ]
     head_parameters = [
         parameter
         for name, parameter in model.named_parameters()
@@ -118,7 +135,9 @@ def build_optimizer(model: RLNet, args: argparse.Namespace) -> torch.optim.Optim
     ]
     parameter_groups: list[dict] = []
     if backbone_parameters:
-        parameter_groups.append({"params": backbone_parameters, "lr": args.backbone_learning_rate})
+        parameter_groups.append(
+            {"params": backbone_parameters, "lr": args.backbone_learning_rate}
+        )
     if head_parameters:
         parameter_groups.append({"params": head_parameters, "lr": args.learning_rate})
     return torch.optim.AdamW(parameter_groups, weight_decay=args.weight_decay)
@@ -131,8 +150,14 @@ def main() -> None:
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    records = discover_records(args.dataset_root)
-    train_records, val_records = split_records(records, test_size=args.val_size, seed=args.seed)
+    records = []
+    for root in args.dataset_root:
+        records.extend(discover_records(root))
+    if args.max_samples is not None:
+        records = records[: args.max_samples]
+    train_records, val_records = split_records(
+        records, test_size=args.val_size, seed=args.seed
+    )
 
     if args.max_train_samples is not None:
         train_records = train_records[: args.max_train_samples]
@@ -152,8 +177,18 @@ def main() -> None:
         train=False,
     )
 
-    train_loader = build_loader(train_dataset, batch_size=args.batch_size, num_workers=args.num_workers, shuffle=True)
-    val_loader = build_loader(val_dataset, batch_size=args.batch_size, num_workers=args.num_workers, shuffle=False)
+    train_loader = build_loader(
+        train_dataset,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        shuffle=True,
+    )
+    val_loader = build_loader(
+        val_dataset,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        shuffle=False,
+    )
 
     device = torch.device(args.device)
     model = RLNet(
@@ -179,7 +214,10 @@ def main() -> None:
     best_val_f1 = -1.0
     best_checkpoint_path = output_dir / "best.pt"
     serialized_config = {
-        key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()
+        key: [str(v) for v in value]
+        if isinstance(value, list)
+        else (str(value) if isinstance(value, Path) else value)
+        for key, value in vars(args).items()
     }
     print(
         "training_config="
@@ -191,7 +229,11 @@ def main() -> None:
     )
 
     for epoch in range(1, args.epochs + 1):
-        if args.freeze_backbone and args.unfreeze_epoch > 0 and epoch == args.unfreeze_epoch:
+        if (
+            args.freeze_backbone
+            and args.unfreeze_epoch > 0
+            and epoch == args.unfreeze_epoch
+        ):
             model.set_backbone_trainable(True)
             optimizer = build_optimizer(model, args)
             scheduler = ReduceLROnPlateau(
