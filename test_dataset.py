@@ -12,7 +12,6 @@ from rlnet.data import FrameSequenceDataset, VideoRecord, discover_records
 from rlnet.metrics import classification_metrics
 from rlnet.model import RLNet
 
-
 LABEL_NAMES = {
     0: "real",
     1: "fake",
@@ -20,13 +19,19 @@ LABEL_NAMES = {
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run a checkpoint over the whole dataset and export predictions to CSV.")
+    parser = argparse.ArgumentParser(
+        description="Run a checkpoint over the whole dataset and export predictions to CSV."
+    )
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--dataset-root", type=Path, default=Path("UADFV"))
-    parser.add_argument("--output-csv", type=Path, default=Path("artifacts/dataset_predictions.csv"))
+    parser.add_argument(
+        "--output-csv", type=Path, default=Path("artifacts/dataset_predictions.csv")
+    )
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--num-workers", type=int, default=0)
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument(
+        "--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu"
+    )
     return parser.parse_args()
 
 
@@ -47,7 +52,9 @@ def load_model(checkpoint_path: Path, device: torch.device) -> tuple[RLNet, dict
     return model, config
 
 
-def build_loader(records: list[VideoRecord], config: dict, batch_size: int, num_workers: int) -> DataLoader:
+def build_loader(
+    records: list[VideoRecord], config: dict, batch_size: int, num_workers: int
+) -> DataLoader:
     dataset = FrameSequenceDataset(
         records,
         sequence_length=int(config["sequence_length"]),
@@ -117,7 +124,9 @@ def main() -> None:
                     "prob_fake": round(probability, 6),
                     "correct": int(prediction == label),
                     "frame_dir": str(record.frame_dir),
-                    "video_path": "" if record.video_path is None else str(record.video_path),
+                    "video_path": ""
+                    if record.video_path is None
+                    else str(record.video_path),
                 }
             )
 
