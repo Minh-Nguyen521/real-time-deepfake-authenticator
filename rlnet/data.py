@@ -9,7 +9,6 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset
 
-
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
 
 
@@ -30,15 +29,16 @@ def discover_records(dataset_root: str | Path) -> list[VideoRecord]:
     records: list[VideoRecord] = []
 
     for split_name, label in layout.items():
-        frame_root = dataset_root / split_name / "frames"
         video_root = dataset_root / split_name
-        if not frame_root.exists():
+        if not video_root.exists():
             continue
+
+        nested_frame_root = video_root / "frames"
+        frame_root = nested_frame_root if nested_frame_root.exists() else video_root
 
         for frame_dir in sorted(path for path in frame_root.iterdir() if path.is_dir()):
             video_id = frame_dir.name
-            mp4_name = f"{video_id}.mp4" if label == 0 else f"{video_id}.mp4"
-            video_path = video_root / mp4_name
+            video_path = video_root / f"{video_id}.mp4"
             records.append(
                 VideoRecord(
                     video_id=video_id,
@@ -69,7 +69,9 @@ def split_records(
     return train_records, val_records
 
 
-def default_image_transform(image_size: int = 224, train: bool = False) -> Callable[[Image.Image], torch.Tensor]:
+def default_image_transform(
+    image_size: int = 224, train: bool = False
+) -> Callable[[Image.Image], torch.Tensor]:
     from torchvision import transforms
 
     ops: list[Callable]
@@ -77,7 +79,9 @@ def default_image_transform(image_size: int = 224, train: bool = False) -> Calla
         ops = [
             transforms.RandomResizedCrop(image_size, scale=(0.8, 1.0)),
             transforms.RandomHorizontalFlip(p=0.5),
-            transforms.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.15, hue=0.02),
+            transforms.ColorJitter(
+                brightness=0.15, contrast=0.15, saturation=0.15, hue=0.02
+            ),
             transforms.RandomRotation(degrees=5),
         ]
     else:
@@ -95,7 +99,11 @@ def default_image_transform(image_size: int = 224, train: bool = False) -> Calla
 
 def list_frame_paths(frame_dir: str | Path) -> list[Path]:
     frame_dir = Path(frame_dir)
-    frame_paths = sorted(path for path in frame_dir.iterdir() if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES)
+    frame_paths = sorted(
+        path
+        for path in frame_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
+    )
     if not frame_paths:
         raise FileNotFoundError(f"No frames found in {frame_dir}")
     return frame_paths
@@ -131,7 +139,9 @@ class FrameSequenceDataset(Dataset[tuple[torch.Tensor, torch.Tensor, str]]):
     ) -> None:
         self.records = records
         self.sequence_length = sequence_length
-        self.transform = transform or default_image_transform(image_size=image_size, train=train)
+        self.transform = transform or default_image_transform(
+            image_size=image_size, train=train
+        )
         self._frame_paths_cache: dict[Path, list[Path]] = {}
 
     def __len__(self) -> int:
@@ -140,8 +150,14 @@ class FrameSequenceDataset(Dataset[tuple[torch.Tensor, torch.Tensor, str]]):
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, str]:
         record = self.records[index]
         frame_paths = self._get_frame_paths(record.frame_dir)
-        sampled_paths = [frame_paths[idx] for idx in sample_frame_indices(len(frame_paths), self.sequence_length)]
-        frames = [self.transform(Image.open(frame_path).convert("RGB")) for frame_path in sampled_paths]
+        sampled_paths = [
+            frame_paths[idx]
+            for idx in sample_frame_indices(len(frame_paths), self.sequence_length)
+        ]
+        frames = [
+            self.transform(Image.open(frame_path).convert("RGB"))
+            for frame_path in sampled_paths
+        ]
         sequence = torch.stack(frames, dim=0)
         label = torch.tensor(record.label, dtype=torch.float32)
         return sequence, label, record.video_id

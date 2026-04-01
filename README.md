@@ -1,22 +1,13 @@
 # Real-Time Deepfake Authenticator
 
-This repository contains a practical baseline reimplementation of an RLNet-style deepfake video detector built around a `ResNet50 + LSTM` architecture.
+This repository contains a practical RLNet-style deepfake video baseline built around a `ResNet50 + LSTM` model and frame-sequence datasets such as `UADFV`.
 
-The current workspace is centered on the `UADFV` dataset and uses pre-extracted frame sequences for training and inference. The implementation is inspired by the 2025 RLNet paper, but it is not a strict reproduction of the published experiments.
+The current project status is:
 
-## What is included
-
-- A frame-sequence dataset loader for `UADFV`
-- An `RLNet` model with:
-  - `ResNet50` as the spatial encoder
-  - `LSTM` as the temporal sequence model
-- A training script with:
-  - stratified train/validation splitting
-  - checkpoint saving
-  - basic classification metrics
-- A prediction script for running inference on a single frame directory
-- A visualization script for annotated sampled frames and temporal probability plots
-- Lazy frame loading with cached per-directory frame indexes
+- training, single-sample prediction, visualization, and whole-dataset CSV export are implemented
+- the pipeline works on extracted frame folders under `UADFV/.../frames` and `processed_data_keyframes/{real,fake}/...`
+- transfer learning with pretrained `ResNet50` weights is enabled by default
+- this is still a baseline system, not a paper-exact reproduction or a tuned production model
 
 ## Repository layout
 
@@ -25,8 +16,8 @@ The current workspace is centered on the `UADFV` dataset and uses pre-extracted 
 ├── UADFV/
 ├── predict.py
 ├── test_dataset.py
-├── visualize.py
 ├── train.py
+├── visualize.py
 └── rlnet/
     ├── __init__.py
     ├── data.py
@@ -37,7 +28,7 @@ The current workspace is centered on the `UADFV` dataset and uses pre-extracted 
 
 ## Dataset layout
 
-The code expects the dataset to look like this:
+The code expects this structure:
 
 ```text
 UADFV/
@@ -57,21 +48,47 @@ UADFV/
             └── ...
 ```
 
-The training and prediction pipeline currently reads from the extracted PNG frame folders under `real/frames` and `fake/frames`.
+The model currently trains and evaluates from the extracted PNG frame folders, not by decoding raw videos on the fly.
 
-## Loading behavior
+It also supports this processed keyframe layout:
 
-The dataset loader is lazy:
+```text
+processed_data_keyframes/
+├── real/
+│   └── <video_id>/
+│       ├── frame0.jpg
+│       ├── frame1.jpg
+│       └── ...
+└── fake/
+    └── <video_id>/
+        ├── frame0.jpg
+        ├── frame1.jpg
+        └── ...
+```
 
-- it discovers video/frame directories up front
-- it opens frame images only when a sample is requested
-- it caches each frame directory listing after first access so later epochs avoid repeated directory scans
+## Current model
 
-This keeps memory usage lower than preloading all extracted frames into RAM.
+The baseline in [`rlnet/model.py`](./rlnet/model.py) uses:
+
+- `ResNet50` backbone for per-frame spatial features
+- `LSTM` temporal encoder
+- bidirectional temporal modeling by default
+- mean/max temporal pooling before the final classifier
+- pretrained ImageNet `ResNet50` weights by default
+
+## Data loading
+
+The dataset loader in [`rlnet/data.py`](./rlnet/data.py) is lazy:
+
+- frame directories are discovered up front
+- frame images are opened only when a sample is requested
+- frame path lists are cached after first access
+
+This keeps memory use lower than preloading all extracted frames.
 
 ## Environment
 
-The implementation was verified with:
+Verified in this workspace with:
 
 - Python `3.14`
 - `torch 2.11.0`
@@ -80,20 +97,31 @@ The implementation was verified with:
 
 ## Train
 
-Run a standard training job:
+Run training with:
 
 ```bash
 python train.py --dataset-root UADFV --output-dir artifacts/rlnet_run
 ```
 
-The default training recipe now uses:
+Important current defaults in [`train.py`](./train.py):
 
-- pretrained ImageNet `ResNet50` weights
-- a frozen-backbone warm start, then backbone unfreezing
-- a lower learning rate for the backbone than for the temporal/classification head
-- `tqdm` progress bars for both training and validation batches
+- `pretrained_backbone=True`
+- `freeze_backbone=True`
+- `unfreeze_epoch=3`
+- `learning_rate=3e-4`
+- `backbone_learning_rate=3e-5`
+- `bidirectional=True`
+- `epochs=10`
 
-Useful options:
+The training loop includes:
+
+- stratified train/validation split
+- `tqdm` progress bars
+- separate learning rates for backbone and head
+- validation-loss scheduler
+- checkpoint saving by best validation F1
+
+Example extended run:
 
 ```bash
 python train.py \
@@ -107,17 +135,16 @@ python train.py \
   --num-layers 2 \
   --dropout 0.3 \
   --learning-rate 3e-4 \
-  --backbone-learning-rate 3e-5 \
-  --weight-decay 1e-4
+  --backbone-learning-rate 3e-5
 ```
 
-If you want to disable transfer learning for comparison, use:
+Disable transfer learning for comparison:
 
 ```bash
 python train.py --no-pretrained-backbone --no-freeze-backbone
 ```
 
-If you want to experiment quickly on a tiny subset:
+Quick smoke test:
 
 ```bash
 python train.py \
@@ -135,15 +162,15 @@ python train.py \
 
 Training outputs:
 
-- `best.pt`: best checkpoint by validation F1
-- `history.json`: per-epoch metrics
-- `split.json`: train/validation video IDs
+- `best.pt`
+- `history.json`
+- `split.json`
 
-At startup, the script prints the active training configuration so you can verify that the pretrained backbone is enabled.
+The script prints the active training configuration at startup, so you can confirm pretrained weights are enabled.
 
-## Predict
+## Predict one sample
 
-Run inference on a single extracted frame directory:
+Run inference on one extracted frame directory:
 
 ```bash
 python predict.py \
@@ -159,18 +186,27 @@ prob_fake=0.4828
 predicted_label=real
 ```
 
-## Test Whole Dataset
+## Test whole dataset to CSV
 
-Run a checkpoint over every discovered sample and export the predictions to CSV:
+Run the checkpoint across every discovered sample and export predictions:
 
 ```bash
-./venv/bin/python test_dataset.py \
+python test_dataset.py \
   --checkpoint artifacts/rlnet_run/best.pt \
   --dataset-root UADFV \
   --output-csv artifacts/dataset_predictions.csv
 ```
 
-The CSV includes:
+Alternate processed-keyframe dataset:
+
+```bash
+python test_dataset.py \
+  --checkpoint artifacts/rlnet_run/best.pt \
+  --dataset-root processed_data_keyframes \
+  --output-csv artifacts/processed_keyframes_predictions.csv
+```
+
+CSV columns:
 
 - `video_id`
 - `label`
@@ -181,11 +217,16 @@ The CSV includes:
 - `frame_dir`
 - `video_path`
 
-The script also prints dataset-level accuracy, precision, recall, and F1 at the end.
+The script also prints dataset-level:
 
-## Visualize
+- accuracy
+- precision
+- recall
+- F1
 
-Generate a contact sheet and a simple temporal probability plot for one frame directory:
+## Visualize predictions
+
+Create a contact sheet, temporal probability plot, and JSON summary for one frame directory:
 
 ```bash
 python visualize.py \
@@ -193,7 +234,13 @@ python visualize.py \
   --frames-dir UADFV/real/frames/0000
 ```
 
-Example output:
+Default outputs go under `artifacts/visualizations/<video_id>/`:
+
+- `contact_sheet.png`
+- `temporal_probabilities.png`
+- `summary.json`
+
+Example console output:
 
 ```text
 frames_dir=UADFV/real/frames/0000
@@ -204,25 +251,30 @@ temporal_plot=artifacts/visualizations/0000/temporal_probabilities.png
 summary=artifacts/visualizations/0000/summary.json
 ```
 
-What it saves:
-
-- `contact_sheet.png`: sampled frames with per-step prefix probability and final video-level probability
-- `temporal_probabilities.png`: line plot of the fake probability as more sampled frames are revealed
-- `summary.json`: machine-readable prediction summary and sampled frame list
-
 ## Notes
 
-- This is a practical baseline, not a paper-exact reproduction.
-- The implementation uses pre-extracted frames instead of decoding videos on the fly.
-- The paper reports a `ResNet50 + LSTM` configuration, but some experimental details are not fully specified in a reproducible way.
-- The `UADFV` dataset in this repo is small, so results can vary significantly depending on the split and hyperparameters.
-- Because the dataset is small, transfer learning is strongly recommended; training `ResNet50` from scratch will often hover near chance.
+- The pretrained `ResNet50` weights may load instantly without showing a download, because they are cached locally by `torchvision`.
+- On this machine, the cached checkpoint file is under the Torch hub cache, so no visible re-download is expected once it is present.
+- The dataset is small, so performance is very sensitive to the split and hyperparameters.
+- Transfer learning is strongly recommended. Training from scratch can easily stay near chance.
+- The current pipeline does not yet include face cropping, video decoding, k-fold evaluation, or a production inference app.
 
-## Next improvements
+## Current limitations
 
-Possible next steps:
+- This is not an exact reproduction of the 2025 RLNet paper.
+- The current dataset test script evaluates all discovered samples, but it does not yet export confusion matrices or threshold sweeps.
+- The model is still under active tuning; low accuracy on a checkpoint usually means that checkpoint needs better training rather than that the scripts are broken.
 
+## Next useful improvements
+
+- add confusion matrix and threshold sweep export to `test_dataset.py`
+- add k-fold cross-validation for more stable evaluation on `UADFV`
 - add face-cropping preprocessing
 - support direct video decoding at inference time
-- add confusion matrix and richer evaluation reports
-- build a webcam or upload-based demo app
+
+## Dataset Link
+https://www.kaggle.com/datasets/maysuni/wild-deepfake
+https://www.kaggle.com/datasets/adityakeshri9234/uadfv-dataset
+
+## Core Ideas from this paper
+https://www.researchgate.net/publication/393555522_Design_and_development_of_an_efficient_RLNet_prediction_model_for_deepfake_video_detection

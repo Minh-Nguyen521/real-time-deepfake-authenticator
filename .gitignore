@@ -2,3 +2,6 @@ UADFV/
 artifacts/
 __pycache__/
 .DS_Store
+venv
+venv312
+processed_data_keyframes
