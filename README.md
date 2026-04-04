@@ -168,6 +168,26 @@ Training outputs:
 
 The script prints the active training configuration at startup, so you can confirm pretrained weights are enabled.
 
+Generate training and evaluation visual summaries later from saved artifacts:
+
+```bash
+python3 visualize_results.py \
+  --checkpoint artifacts/rlnet_run/best.pt
+```
+
+If you already ran [`test_dataset.py`](./test_dataset.py), include its CSV to also render a dataset-level prediction summary:
+
+```bash
+python3 visualize_results.py \
+  --checkpoint artifacts/rlnet_run/best.pt \
+  --predictions-csv artifacts/dataset_predictions.csv
+```
+
+Default outputs go under `artifacts/rlnet_run/visualizations/`:
+
+- `training_curves.png`
+- `dataset_predictions_summary.png` when `--predictions-csv` is provided
+
 ## Predict one sample
 
 Run inference on one extracted frame directory:
